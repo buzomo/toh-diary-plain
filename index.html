@@ -3,7 +3,6 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>年間一行日記</title>
     <style>
         body {
@@ -162,6 +161,7 @@
             <button id="nextYear">▶</button>
         </div>
     </div>
+
     <table id="diaryTable">
         <thead>
             <tr>
@@ -172,10 +172,13 @@
             </tr>
         </thead>
         <tbody id="diaryBody">
+            <!-- ここは元々は空 or 初期状態のまま。JSで日付を追加描画する -->
         </tbody>
     </table>
+    <script id="backupData" type="application/json">{}</script>
 
     <script>
+        /* 祝日などの配列（省略） */
         const holidays = [
             { date: "2023-01-01", name: "元旦" },
             { date: "2023-01-09", name: "成人の日" },
@@ -340,25 +343,52 @@
             { date: "2030-11-23", name: "勤労感謝の日" }
         ];
 
+        let entrydata = {};  // 各日付の「内容」を保存する
 
-
-        const entrydata = {};
         const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
-        let saveTimeout;
-        let lastSavedHTML = '';
         let currentDate = new Date();
         let currentYear = currentDate.getFullYear();
 
-        document.getElementById('currentYear').addEventListener('click', function () {
-            loadYear(currentDate.getFullYear());
-        });
+        function loadFromHTML() {
+            // HTML埋め込みのJSONをパース
+            const backupTag = document.getElementById('backupData');
+            if (backupTag) {
+                try {
+                    const parsed = JSON.parse(backupTag.textContent);
+                    // すでにローカル保存が無ければ、HTMLから読み込む
+                    if (!localStorage.getItem('diaryData')) {
+                        entrydata = parsed;
+                        saveToLocalStorage();
+                    }
+                } catch (e) {
+                    console.error('HTML埋め込みデータのパースに失敗', e);
+                }
+            }
+        }
 
 
+        // ▼追加: オリジナルの状態を退避（空の <tbody> ならそのまま空文字を保存）
+        const originalTbodyHTML = document.getElementById('diaryBody').innerHTML;
+
+        /* LocalStorageから既存データを読み込み */
+        function loadFromLocalStorage() {
+            const savedData = localStorage.getItem('diaryData');
+            if (savedData) {
+                entrydata = JSON.parse(savedData);
+            }
+        }
+
+        /* LocalStorageにデータを書き込み */
+        function saveToLocalStorage() {
+            localStorage.setItem('diaryData', JSON.stringify(entrydata));
+        }
+
+        /* 指定年のカレンダーを描画 */
         function loadYear(year) {
             currentYear = year;
             document.getElementById('currentYear').textContent = year;
             const table = document.getElementById('diaryBody');
-            table.innerHTML = '';
+            table.innerHTML = ''; // 一旦クリア
 
             const startDate = new Date(year, 0, 1);
             const endDate = new Date(year, 11, 31);
@@ -370,11 +400,15 @@
                 const holidayCell = row.insertCell(2);
                 const contentCell = row.insertCell(3);
 
-                const formattedDate = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+                const formattedDate = `${d.getFullYear()}-${(d.getMonth() + 1)
+                    .toString().padStart(2, '0')}-${d.getDate()
+                        .toString().padStart(2, '0')}`;
                 dateCell.textContent = formattedDate;
                 dayCell.textContent = dayNames[d.getDay()];
+
                 contentCell.className = 'editable';
                 contentCell.contentEditable = true;
+                // 既に保存されている内容があれば表示
                 contentCell.textContent = entrydata[formattedDate] || '';
 
                 if (d.getDay() === 0) {
@@ -394,40 +428,61 @@
         document.getElementById('prevYear').addEventListener('click', function () {
             loadYear(currentYear - 1);
         });
-
         document.getElementById('nextYear').addEventListener('click', function () {
             loadYear(currentYear + 1);
         });
 
+        /* 「内容」セルが編集されたら entrydata に反映 */
         document.getElementById('diaryBody').addEventListener('input', function (e) {
             if (e.target.className === 'editable') {
-                clearTimeout(saveTimeout);
-                saveTimeout = setTimeout(() => {
-                    const row = e.target.parentElement;
-                    const date = row.cells[0].textContent;
-                    const content = e.target.textContent;
-                    entrydata[date] = content;
-                    saveHTML();
-                }, 2000);
+                const row = e.target.parentElement;
+                const date = row.cells[0].textContent; // 日付
+                const content = e.target.textContent;
+                entrydata[date] = content;
+                saveToLocalStorage();
+            }
+        });
+
+        /*
+          Ctrl+S キーを押したときに、
+          1) diaryBody を元のHTMLに戻す（=描画前の素の状態）
+          2) 既に entrydata に内容は格納されているので、
+             そのまま全体を outerHTML で書き出し
+        */
+        document.addEventListener('keydown', function (e) {
+            if (e.ctrlKey && e.key === 's') {
+                e.preventDefault();
+                saveHTML();
             }
         });
 
         function saveHTML() {
+            // まず entrydata を JSON化し、HTML内に埋め込む
+            const dataTag = document.getElementById('backupData');
+            dataTag.textContent = JSON.stringify(entrydata);
+
+            // diaryBody を一旦「初期状態」に戻すならここで実行
+            document.getElementById('diaryBody').innerHTML = ""
+
+            // HTML全体を取得して Blob として保存
             const htmlContent = document.documentElement.outerHTML;
-            if (htmlContent !== lastSavedHTML) {
-                const blob = new Blob([htmlContent], { type: 'text/html' });
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = 'diary.html';
-                a.click();
-                lastSavedHTML = htmlContent;
-            }
+            const blob = new Blob([htmlContent], { type: 'text/html' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'diary.html';
+            a.click();
+            loadYear(currentYear);
+
         }
 
         document.addEventListener('DOMContentLoaded', function () {
+            // ローカルストレージ読み込み
+            loadFromLocalStorage();
+            // HTMLに埋め込まれたデータを取り込み(ローカルストレージが空であれば上書き)
+            loadFromHTML();
+            // 以降テーブル描画など
             loadYear(currentYear);
         });
-
     </script>
 </body>
 
